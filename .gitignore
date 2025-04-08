@@ -1,0 +1,66 @@
+# ============================
+# GENERAL / COMMON FILES
+# ============================
+# Node modules for both backend and frontend
+node_modules/
+**/node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Environment files (do not commit sensitive configuration)
+.env
+.env.*.local
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Temporary folders
+tmp/
+temp/
+
+# ============================
+# BACKEND SPECIFIC
+# ============================
+# Build output (if any)
+build/
+dist/
+
+# Uploads folder (if you're storing files locally)
+uploads/
+
+# ============================
+# FRONTEND SPECIFIC (e.g., Vite/React)
+# ============================
+# Build output folders
+dist/
+build/
+
+# Vite cache folder (if applicable)
+.vite/
+
+# Frontend specific cache
+.cache/
+
+# If your frontend is in a separate directory (for example, "frontend/")
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# ============================
+# EDITOR/IDE CONFIGURATION
+# ============================
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# ============================
+# Coverage reports
+# ============================
+coverage/
