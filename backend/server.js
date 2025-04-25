@@ -215,251 +215,233 @@
 
 // const PORT = process.env.PORT || 5000;
 // app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-// server.js
+
 import express from "express";
 import multer from "multer";
 import cors from "cors";
-import fs from "fs";
 import path from "path";
+import fs from "fs";
 import axios from "axios";
-import streamifier from "streamifier";
 import cloudinary from "./services/cloudinary/cloudinary.js";
 import upload from "./services/cloudinary/upload.js";
-import sharp from "sharp";
-import cv from "opencv4nodejs";
-import { createWorker } from "tesseract.js";
+import { processAllPages } from "./controllers/geminiController.js";
 import { fromBuffer } from "pdf2pic";
+import sharp from "sharp";
+
+// pdf-lib and fontkit
 import { PDFDocument, rgb } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
-import { translateWithGemini } from "./controllers/geminiController.js"; // a simple text→translation wrapper
+import streamifier from "streamifier";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-/** 1) Upload modified PDF to Cloudinary */
+/** Upload PDF buffer to Cloudinary */
 const uploadPdfToCloudinary = (buffer) =>
   new Promise((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
       {
         resource_type: "raw",
         folder: "manga_backend",
-        public_id: `translated_${Date.now()}`,
+        public_id: `modified_${Date.now()}.pdf`,
         format: "pdf",
       },
-      (err, result) => (err ? reject(err) : resolve(result))
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
     );
     streamifier.createReadStream(buffer).pipe(uploadStream);
   });
 
-/** 2) Convert PDF → high-res PNG pages */
-async function pdfToImages(pdfBuffer) {
-  const tmpDoc = await PDFDocument.load(pdfBuffer);
-  const dims = tmpDoc.getPages().map(p => {
-    const { width, height } = p.getSize();
-    const max = 1024;
-    if (width > height) return { width: max, height: Math.round((height/width)*max) };
-    else             return { height: max, width:  Math.round((width/height)*max) };
-  });
+/** Adjust bounding box from image to PDF coords */
+const adjustCoordinates = (bb, pageW, pageH, imgW, imgH) => {
+  const xScale = pageW / imgW;
+  const yScale = pageH / imgH;
+  const x = bb.x * xScale;
+  const y = pageH - (bb.y + bb.height) * yScale;
+  return {
+    x,
+    y,
+    width: bb.width * xScale,
+    height: bb.height * yScale,
+  };
+};
 
-  const converter = fromBuffer(pdfBuffer, {
-    density: 350,
-    format: "png",
-    width: dims[0].width,
-    height: dims[0].height,
-    savePath: "./temp",
-    saveFilename: "page",
-  });
-  const pages = await converter.bulk(-1);
+/** Enhance images via sharp */
+const enhanceImagesForTextDetection = async (base64Images) =>
+  Promise.all(
+    base64Images.map(async (b64) => {
+      const buf = Buffer.from(b64, "base64");
+      const out = await sharp(buf)
+        .modulate({ brightness: 1.1, contrast: 1.3 })
+        .sharpen(0.5, 0.8, 0.5)
+        .median(1)
+        .toBuffer();
+      return out.toString("base64");
+    })
+  );
 
-  return pages.map((p, i) => {
-    const img = fs.readFileSync(p.path);
-    fs.unlinkSync(p.path);
-    return {
-      page: i + 1,
-      buffer: img,
-      width: dims[i].width,
-      height: dims[i].height
-    };
-  });
-}
+/** Improved overlay that tags pages and dedups per-page */
+const improvedOverlayTranslations = async (pdfDoc, geminiResult, customFont) => {
+  const pages = pdfDoc.getPages();
 
-/** 3) Pre-process images with Sharp for better OCR */
-async function enhanceImages(pages) {
-  return Promise.all(pages.map(async pg => {
-    const out = await sharp(pg.buffer)
-      .modulate({ brightness: 1.1, contrast: 1.3 })
-      .median(1)
-      .toBuffer();
-    return { ...pg, buffer: out };
-  }));
-}
+  for (const entry of geminiResult) {
+    const { page, translations, imageWidth, imageHeight } = entry;
+    if (page < 1 || page > pages.length) continue;
 
-/** 4) Detect speech-bubble contours with OpenCV */
-function detectBubbleBoxes(buffer) {
-  const mat = cv.imdecode(buffer).bgrToGray();
-  const bin = mat.adaptiveThreshold(255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 15, 2);
-  const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(25,25));
-  const closed = bin.morphologyEx(kernel, cv.MORPH_CLOSE);
-  const cnts = closed.findContours(cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-  const minArea = mat.rows * mat.cols * 0.0005;
+    const pdfPage = pages[page - 1];
+    const { width: pw, height: ph } = pdfPage.getSize();
 
-  return cnts
-    .map(c => c.boundingRect())
-    .filter(b => b.width * b.height > minArea)
-    .map(b => ({ x: b.x, y: b.y, width: b.width, height: b.height }));
-}
-
-/** 5) OCR each bubble region via Tesseract.js */
-async function ocrBubbles(pageBuf, boxes) {
-  const worker = createWorker();
-  await worker.load();
-  await worker.loadLanguage("eng");
-  await worker.initialize("eng");
-
-  const results = [];
-  const pageMat = cv.imdecode(pageBuf);
-
-  for (const box of boxes) {
-    const roi = pageMat.getRegion(new cv.Rect(box.x, box.y, box.width, box.height));
-    const png = cv.imencode(".png", roi);
-    const { data:{ text } } = await worker.recognize(png);
-    results.push({ boundingBox: box, text: text.trim() });
-  }
-
-  await worker.terminate();
-  return results;
-}
-
-/** 6) Translate each bubble’s text via Gemini-flash */
-async function translateBubbles(ocrResults) {
-  return Promise.all(ocrResults.map(async ({ boundingBox, text }) => {
-    const translated = await translateWithGemini(text);
-    return { boundingBox, translatedText: translated };
-  }));
-}
-
-/** 7) Overlay translations onto a new PDF */
-async function overlayTranslations(pdfBuffer, pages, allTranslations) {
-  const pdfDoc = await PDFDocument.load(pdfBuffer);
-  pdfDoc.registerFontkit(fontkit);
-  const fontBytes = fs.readFileSync("./fonts/NotoSans-VariableFont_wdth,wght.ttf");
-  const customFont = await pdfDoc.embedFont(fontBytes);
-
-  // create a fresh PDF with image backgrounds
-  const outPdf = await PDFDocument.create();
-  outPdf.registerFontkit(fontkit);
-  const embeddedFont = await outPdf.embedFont(fontBytes);
-
-  // create a fresh PDF with image backgrounds
-for (const pg of pages) {
-  const page = outPdf.addPage([pg.width, pg.height]);
-  // await here works
-  const png = await outPdf.embedPng(pg.buffer);
-  page.drawImage(png, {
-    x: 0, y: 0,
-    width: pg.width,
-    height: pg.height
-  });
-}
-
-
-  // draw each bubble’s translation
-  const outPages = outPdf.getPages();
-  for (const { page, translations } of allTranslations.reduce((map, pg) => {
-    map[pg.page] ??= { page: pg.page, translations: [] };
-    map[pg.page].translations.push(...pg.translations);
-    return map;
-  }, {})) {
-    const pdfPage = outPages[page-1];
-    const { width:PW, height:PH } = pdfPage.getSize();
-
+    // reset per-page dedup set
     const seen = new Set();
+
     for (const { boundingBox, translatedText } of translations) {
-      if (!translatedText) continue;
-      // scale coords
-      const xScale = PW / pages[page-1].width,
-            yScale = PH / pages[page-1].height;
-      const x = boundingBox.x * xScale,
-            y = PH - (boundingBox.y + boundingBox.height)*yScale,
-            w = boundingBox.width * xScale,
-            h = boundingBox.height* yScale;
-      const sig = `${x|0}-${y|0}-${w|0}-${h|0}`;
+      if (!translatedText?.trim()) continue;
+
+      // compute PDF coords
+      const box = adjustCoordinates(boundingBox, pw, ph, imageWidth, imageHeight);
+      const sig = `${Math.round(box.x)}|${Math.round(box.y)}|${Math.round(box.width)}|${Math.round(box.height)}`;
       if (seen.has(sig)) continue;
       seen.add(sig);
 
-      // fit & wrap
-      let fontSize = Math.min(20, h/2), lines;
-      while (fontSize>=6) {
-        const lh = fontSize*1.2, words=translatedText.split(/\s+/);
-        lines=[], letLine=words.shift();
-        for (const wWord of words) {
-          const test = `${letLine} ${wWord}`;
-          if (embeddedFont.widthOfTextAtSize(test,fontSize)<=w-8) letLine=test;
-          else { lines.push(letLine); letLine=wWord; }
+      // text fitting
+      const maxW = box.width - 10;
+      const maxH = box.height - 10;
+      let fontSize = Math.min(24, box.height / 2);
+      fontSize = Math.max(fontSize, 6);
+
+      // simple wrap/fit loop
+      let lines;
+      while (fontSize >= 6) {
+        const lh = fontSize * 1.2;
+        const words = translatedText.trim().split(/\s+/);
+        lines = [];
+        let line = words.shift();
+        for (const w of words) {
+          const test = `${line} ${w}`;
+          if (customFont.widthOfTextAtSize(test, fontSize) <= maxW) {
+            line = test;
+          } else {
+            lines.push(line);
+            line = w;
+          }
         }
-        lines.push(letLine);
-        if (lines.length*lh<=h-8) break;
-        fontSize--;
+        lines.push(line);
+        if (lines.length * lh <= maxH) break;
+        fontSize -= 1;
       }
 
-      // vertical centering
-      const lh=fontSize*1.2, totalH=lines.length*lh;
-      let startY = y + (h-totalH)/2 + totalH;
+      // center vertically
+      const lineH = fontSize * 1.2,
+            totalH = lines.length * lineH,
+            startY = box.y + (box.height - totalH) / 2 + totalH;
 
-      // draw with stroke
-      for (let i=0;i<lines.length;i++) {
-        const txt = lines[i],
-              tw=embeddedFont.widthOfTextAtSize(txt,fontSize),
-              x0 = x + (w-tw)/2,
-              y0 = startY - i*lh;
+      // draw each line with outline
+      for (let i = 0; i < lines.length; i++) {
+        const text = lines[i];
+        const tw = customFont.widthOfTextAtSize(text, fontSize);
+        const x = box.x + (box.width - tw) / 2;
+        const y = startY - i * lineH;
 
-        // outline
-        [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]]
-          .forEach(([dx,dy])=> pdfPage.drawText(txt,{
-            x:x0+dx,y:y0+dy,size:fontSize,font:embeddedFont,color:rgb(1,1,1)
-          }));
+        // white outline
+        [
+          [-1, -1], [0, -1], [1, -1],
+          [-1,  0],         [1,  0],
+          [-1,  1], [0,  1], [1,  1],
+        ].forEach(([dx, dy]) => {
+          pdfPage.drawText(text, {
+            x: x + dx, y: y + dy,
+            size: fontSize, font: customFont,
+            color: rgb(1, 1, 1),
+          });
+        });
 
-        // fill
-        pdfPage.drawText(txt,{x:x0,y:y0,size:fontSize,font:embeddedFont,color:rgb(0,0,0)});
+        // main text
+        pdfPage.drawText(text, {
+          x, y, size: fontSize, font: customFont, color: rgb(0, 0, 0),
+        });
       }
     }
   }
 
-  return outPdf.save();
-}
+  return pdfDoc;
+};
 
-/** 8) Express route tying it all together */
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    if (!req.file?.path) return res.status(400).json({ error:"Missing PDF" });
+    if (!req.file?.path) return res.status(400).json({ error: "No file" });
 
-    // read pdf
-    const { data } = await axios.get(req.file.path, { responseType:"arraybuffer" });
-    const pdfBuf = Buffer.from(data);
+    // fetch PDF
+    const { data } = await axios.get(req.file.path, { responseType: "arraybuffer" });
+    const pdfBuffer = Buffer.from(data);
 
-    // 2→3: PDF→Images→Enhance
-    let pages = await pdfToImages(pdfBuf);
-    pages = await enhanceImages(pages);
+    // load for dimensions
+    const tempDoc = await PDFDocument.load(pdfBuffer);
+    const dims = tempDoc.getPages().map(p => {
+      const { width, height } = p.getSize();
+      const max = 1024;
+      return width > height
+        ? { width: max, height: Math.round((height/width)*max) }
+        : { height: max, width:  Math.round((width/height)*max) };
+    });
 
-    // 4→5→6: detect→OCR→translate
-    const allTranslations = [];
-    for (const pg of pages) {
-      const boxes = detectBubbleBoxes(pg.buffer);
-      const ocr = await ocrBubbles(pg.buffer, boxes);
-      const translated = await translateBubbles(ocr);
-      allTranslations.push({ page: pg.page, translations: translated });
+    // pdf2pic pages → buffers
+    const converter = fromBuffer(pdfBuffer, {
+      density: 300, format: "png",
+      width: dims[0].width, height: dims[0].height,
+      savePath: "./temp", saveFilename: "page"
+    });
+    const pagesData = await converter.bulk(-1);
+
+    // read & cleanup
+    const base64s = pagesData.map((p, i) => {
+      const buf = fs.readFileSync(p.path);
+      fs.unlinkSync(p.path);
+      return buf.toString("base64");
+    });
+
+    // enhance then call Gemini
+    const enhanced = await enhanceImagesForTextDetection(base64s);
+    let geminiResult = await processAllPages(enhanced);
+
+    // tag each page + attach dims
+    geminiResult = geminiResult.map((pg, i) => ({
+      page: i + 1,
+      ...pg,
+      imageWidth: dims[i].width,
+      imageHeight: dims[i].height
+    }));
+
+    // Build new PDF & overlay
+    const pdfDoc = await PDFDocument.create();
+    pdfDoc.registerFontkit(fontkit);
+    const fontBytes = fs.readFileSync("./fonts/NotoSans-VariableFont_wdth,wght.ttf");
+    const customFont = await pdfDoc.embedFont(fontBytes);
+
+    // add image pages
+    for (let i = 0; i < base64s.length; i++) {
+      const img = Buffer.from(base64s[i], "base64");
+      const png = await pdfDoc.embedPng(img);
+      const page = pdfDoc.addPage([dims[i].width, dims[i].height]);
+      page.drawImage(png, { x: 0, y: 0, width: dims[i].width, height: dims[i].height });
     }
 
-    // 7: overlay & upload
-    const outPdfBuf = await overlayTranslations(pdfBuf, pages, allTranslations);
-    const { secure_url } = await uploadPdfToCloudinary(outPdfBuf);
+    // overlay translations
+    await improvedOverlayTranslations(pdfDoc, geminiResult, customFont);
 
-    res.json({ url_link: secure_url });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error:e.message });
+    // save & upload
+    const outBuf = await pdfDoc.save();
+    const { secure_url } = await uploadPdfToCloudinary(Buffer.from(outBuf));
+    console.log("link of the file " , secure_url)
+    return res.json({ url_link: secure_url });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message });
   }
 });
 
-app.listen(process.env.PORT||5000,()=>console.log("Server running"));
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server on ${PORT}`));
