@@ -11,10 +11,11 @@ const storage = new CloudinaryStorage({
       // Check the mimetype of the file to decide the resource type.
       // If it's a PDF, use 'raw'; otherwise, let Cloudinary auto-detect.
       let resourceType = file.mimetype === 'application/pdf' ? 'raw' : 'auto';
+
       return {
         folder: "manga", // Save all files in the 'manga' folder
         resource_type: resourceType,
-        public_id: file.originalname.split('.')[0] + "-" + Date.now(), // Unique file name
+        public_id: file.originalname.split('.')[0] + "-" + Date.now() , // Unique file name
       };
     },
   });

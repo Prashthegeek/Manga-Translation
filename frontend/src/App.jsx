@@ -32,7 +32,9 @@ function App() {
         method: 'POST',
         body: formData,
       });
+      console.log("the raw response from backend is ", response);
       const data = await response.json();
+      console.log("the data is after .json method" , data , "and type of data is ", typeof data);
       console.log('Upload response:', data);
 
       setOcrText(data.ocrText);
