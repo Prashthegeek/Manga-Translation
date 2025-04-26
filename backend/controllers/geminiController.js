@@ -1,12 +1,28 @@
-import { processImageWithGemini } from "../ocr.js";
+// controllers/geminiController.js
+import axios from "axios";
 
-export async function processAllPages(base64Images){
-    const results = [];  //array of objects , each object contains page number and translations(array which contains translated text and bounding box)
-    //base64Images is an array (contains images in base64 format);
-    for(let i = 0 ;i<base64Images.length ;i++){
-        console.log(`sending page ${i+1} to gemini`);
-        const pageResult =  await processImageWithGemini(base64Images[i] , i+1);
-        results.push(pageResult);  //pageResult contains an object -> each object contains -> page number and an array of objects(name of array is translations ), each object of translations array contains ->translated text and bounding box of each text 
-    } 
-    return results;  //so, results is an array of objects 
+// Make sure you’ve set GOOGLE_API_KEY in your env
+const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const MODEL    = "gemini-1.5-flash"; 
+
+/**
+ * Send a short prompt to Gemini to translate text into English.
+ * @param {string} text Japanese (or other) text to translate
+ * @returns {Promise<string>} Translated English
+ */
+export async function translateWithGemini(text) {
+  const apiKey = 'AIzaSyBhzSRE-R6LMJvRQRSGQ4n4oZvok0Gjeo8'
+  const url = `${BASE_URL}/${MODEL}:generateText?key=${apiKey}`;
+  const payload = {
+    prompt: {
+      text: `Translate the following text to English, preserving meaning and tone:\n\n"${text}"`,
+    },
+    temperature: 0.2,
+    // you can tweak maxOutputTokens, topP, topK here if needed
+  };
+  const res = await axios.post(url, payload);
+  const candidate = res.data.candidates?.[0]?.output;
+  return typeof candidate === "string"
+    ? candidate.trim()
+    : "";  // fallback if API didn’t return
 }

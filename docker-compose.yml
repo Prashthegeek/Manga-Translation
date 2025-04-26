@@ -1,0 +1,23 @@
+
+
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app/backend
+    depends_on:
+      - frontend
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+    ports:
+      - "5173:4173"  # Vite serves on 4173 in production build
+    volumes:
+      - ./frontend:/app/frontend
+    command: npx serve -s dist -l 4173
