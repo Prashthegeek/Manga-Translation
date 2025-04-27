@@ -216,6 +216,242 @@
 // const PORT = process.env.PORT || 5000;
 // app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
+
+
+// import express from "express";
+// import multer from "multer";
+// import cors from "cors";
+// import path from "path";
+// import fs from "fs";
+// import axios from "axios";
+// import cloudinary from "./services/cloudinary/cloudinary.js";
+// import upload from "./services/cloudinary/upload.js";
+// import { processAllPages } from "./controllers/geminiController.js";
+// import { fromBuffer } from "pdf2pic";
+// import sharp from "sharp";
+
+// // pdf-lib and fontkit
+// import { PDFDocument, rgb } from "pdf-lib";
+// import fontkit from "@pdf-lib/fontkit";
+// import streamifier from "streamifier";
+
+// const app = express();
+// app.use(cors());
+// app.use(express.json());
+
+// /** Upload PDF buffer to Cloudinary */
+// const uploadPdfToCloudinary = (buffer) =>
+//   new Promise((resolve, reject) => {
+//     const uploadStream = cloudinary.uploader.upload_stream(
+//       {
+//         resource_type: "raw",
+//         folder: "manga_backend",
+//         public_id: `modified_${Date.now()}.pdf`,
+//         format: "pdf",
+//       },
+//       (error, result) => {
+//         if (error) return reject(error);
+//         resolve(result);
+//       }
+//     );
+//     streamifier.createReadStream(buffer).pipe(uploadStream);
+//   });
+
+// /** Adjust bounding box from image to PDF coords */
+// const adjustCoordinates = (bb, pageW, pageH, imgW, imgH) => {
+//   const xScale = pageW / imgW;
+//   const yScale = pageH / imgH;
+//   const x = bb.x * xScale;
+//   const y = pageH - (bb.y + bb.height) * yScale;
+//   return {
+//     x,
+//     y,
+//     width: bb.width * xScale,
+//     height: bb.height * yScale,
+//   };
+// };
+
+// /** Enhance images via sharp */
+// const enhanceImagesForTextDetection = async (base64Images) =>
+//   Promise.all(
+//     base64Images.map(async (b64) => {
+//       const buf = Buffer.from(b64, "base64");
+//       const out = await sharp(buf)
+//         .modulate({ brightness: 1.1, contrast: 1.3 })
+//         .sharpen(0.5, 0.8, 0.5)
+//         .median(1)
+//         .toBuffer();
+//       return out.toString("base64");
+//     })
+//   );
+
+// /** Improved overlay that tags pages and dedups per-page */
+// const improvedOverlayTranslations = async (pdfDoc, geminiResult, customFont) => {
+//   const pages = pdfDoc.getPages();
+
+//   for (const entry of geminiResult) {
+//     const { page, translations, imageWidth, imageHeight } = entry;
+//     if (page < 1 || page > pages.length) continue;
+
+//     const pdfPage = pages[page - 1];
+//     const { width: pw, height: ph } = pdfPage.getSize();
+
+//     // reset per-page dedup set
+//     const seen = new Set();
+
+//     for (const { boundingBox, translatedText } of translations) {
+//       if (!translatedText?.trim()) continue;
+
+//       // compute PDF coords
+//       const box = adjustCoordinates(boundingBox, pw, ph, imageWidth, imageHeight);
+//       const sig = `${Math.round(box.x)}|${Math.round(box.y)}|${Math.round(box.width)}|${Math.round(box.height)}`;
+//       if (seen.has(sig)) continue;
+//       seen.add(sig);
+
+//       // text fitting
+//       const maxW = box.width - 10;
+//       const maxH = box.height - 10;
+//       let fontSize = Math.min(24, box.height / 2);
+//       fontSize = Math.max(fontSize, 6);
+
+//       // simple wrap/fit loop
+//       let lines;
+//       while (fontSize >= 6) {
+//         const lh = fontSize * 1.2;
+//         const words = translatedText.trim().split(/\s+/);
+//         lines = [];
+//         let line = words.shift();
+//         for (const w of words) {
+//           const test = `${line} ${w}`;
+//           if (customFont.widthOfTextAtSize(test, fontSize) <= maxW) {
+//             line = test;
+//           } else {
+//             lines.push(line);
+//             line = w;
+//           }
+//         }
+//         lines.push(line);
+//         if (lines.length * lh <= maxH) break;
+//         fontSize -= 1;
+//       }
+
+//       // center vertically
+//       const lineH = fontSize * 1.2,
+//             totalH = lines.length * lineH,
+//             startY = box.y + (box.height - totalH) / 2 + totalH;
+
+//       // draw each line with outline
+//       for (let i = 0; i < lines.length; i++) {
+//         const text = lines[i];
+//         const tw = customFont.widthOfTextAtSize(text, fontSize);
+//         const x = box.x + (box.width - tw) / 2;
+//         const y = startY - i * lineH;
+
+//         // white outline
+//         [
+//           [-1, -1], [0, -1], [1, -1],
+//           [-1,  0],         [1,  0],
+//           [-1,  1], [0,  1], [1,  1],
+//         ].forEach(([dx, dy]) => {
+//           pdfPage.drawText(text, {
+//             x: x + dx, y: y + dy,
+//             size: fontSize, font: customFont,
+//             color: rgb(1, 1, 1),
+//           });
+//         });
+
+//         // main text
+//         pdfPage.drawText(text, {
+//           x, y, size: fontSize, font: customFont, color: rgb(0, 0, 0),
+//         });
+//       }
+//     }
+//   }
+
+//   return pdfDoc;
+// };
+
+// app.post("/upload", upload.single("file"), async (req, res) => {
+//   try {
+//     if (!req.file?.path) return res.status(400).json({ error: "No file" });
+
+//     // fetch PDF
+//     const { data } = await axios.get(req.file.path, { responseType: "arraybuffer" });
+//     const pdfBuffer = Buffer.from(data);
+
+//     // load for dimensions
+//     const tempDoc = await PDFDocument.load(pdfBuffer);
+//     const dims = tempDoc.getPages().map(p => {
+//       const { width, height } = p.getSize();
+//       const max = 1024;
+//       return width > height
+//         ? { width: max, height: Math.round((height/width)*max) }
+//         : { height: max, width:  Math.round((width/height)*max) };
+//     });
+
+//     // pdf2pic pages → buffers
+//     const converter = fromBuffer(pdfBuffer, {
+//       density: 300, format: "png",
+//       width: dims[0].width, height: dims[0].height,
+//       savePath: "./temp", saveFilename: "page"
+//     });
+//     const pagesData = await converter.bulk(-1);
+
+//     // read & cleanup
+//     const base64s = pagesData.map((p, i) => {
+//       const buf = fs.readFileSync(p.path);
+//       fs.unlinkSync(p.path);
+//       return buf.toString("base64");
+//     });
+
+//     // enhance then call Gemini
+//     const enhanced = await enhanceImagesForTextDetection(base64s);
+//     let geminiResult = await processAllPages(enhanced);
+
+//     // tag each page + attach dims
+//     geminiResult = geminiResult.map((pg, i) => ({
+//       page: i + 1,
+//       ...pg,
+//       imageWidth: dims[i].width,
+//       imageHeight: dims[i].height
+//     }));
+
+//     // Build new PDF & overlay
+//     const pdfDoc = await PDFDocument.create();
+//     pdfDoc.registerFontkit(fontkit);
+//     const fontBytes = fs.readFileSync("./fonts/NotoSans-VariableFont_wdth,wght.ttf");
+//     const customFont = await pdfDoc.embedFont(fontBytes);
+
+//     // add image pages
+//     for (let i = 0; i < base64s.length; i++) {
+//       const img = Buffer.from(base64s[i], "base64");
+//       const png = await pdfDoc.embedPng(img);
+//       const page = pdfDoc.addPage([dims[i].width, dims[i].height]);
+//       page.drawImage(png, { x: 0, y: 0, width: dims[i].width, height: dims[i].height });
+//     }
+
+//     // overlay translations
+//     await improvedOverlayTranslations(pdfDoc, geminiResult, customFont);
+
+//     // save & upload
+//     const outBuf = await pdfDoc.save();
+//     const { secure_url } = await uploadPdfToCloudinary(Buffer.from(outBuf));
+//     console.log("link of the file " , secure_url)
+//     return res.json({ url_link: secure_url });
+
+//   } catch (err) {
+//     console.error(err);
+//     return res.status(500).json({ error: err.message });
+//   }
+// });
+
+// const PORT = process.env.PORT || 5000;
+// app.listen(PORT, () => console.log(`Server on ${PORT}`));
+
+
+
+
+
 import express from "express";
 import multer from "multer";
 import cors from "cors";
@@ -229,7 +465,7 @@ import { fromBuffer } from "pdf2pic";
 import sharp from "sharp";
 
 // pdf-lib and fontkit
-import { PDFDocument, rgb } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import streamifier from "streamifier";
 
@@ -260,7 +496,7 @@ const adjustCoordinates = (bb, pageW, pageH, imgW, imgH) => {
   const xScale = pageW / imgW;
   const yScale = pageH / imgH;
   const x = bb.x * xScale;
-  const y = pageH - (bb.y + bb.height) * yScale;
+  const y = pageH - (bb.y + bb.height) * yScale; // Y coordinates in PDF start from bottom
   return {
     x,
     y,
@@ -283,95 +519,197 @@ const enhanceImagesForTextDetection = async (base64Images) =>
     })
   );
 
+/** Draw text with background for better readability */
+const drawTextWithBackground = (page, text, x, y, fontSize, font, options = {}) => {
+  const { 
+    bgColor = rgb(1, 1, 1), 
+    textColor = rgb(0, 0, 0),
+    padding = 2,
+    opacity = 0.7 
+  } = options;
+  
+  const textWidth = font.widthOfTextAtSize(text, fontSize);
+  const textHeight = fontSize;
+  
+  // Draw semi-transparent background
+  page.drawRectangle({
+    x: x - padding,
+    y: y - padding,
+    width: textWidth + (padding * 2),
+    height: textHeight + (padding * 2),
+    color: bgColor,
+    opacity: opacity
+  });
+  
+  // Draw text
+  page.drawText(text, {
+    x,
+    y,
+    size: fontSize,
+    font,
+    color: textColor
+  });
+};
+
 /** Improved overlay that tags pages and dedups per-page */
-const improvedOverlayTranslations = async (pdfDoc, geminiResult, customFont) => {
-  const pages = pdfDoc.getPages();
+const improvedOverlayTranslations = async (pdfDoc, geminiResult) => {
+  try {
+    // Load the appropriate font
+    const fallbackFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    
+    // Try to embed a better CJK-compatible font
+    let primaryFont;
+// Try to embed Noto Sans or fallback to a standard PDF font
+try {
+  const fontPath = "./fonts/NotoSans-Regular.ttf";
+  if (fs.existsSync(fontPath)) {
+    const fontBytes = fs.readFileSync(fontPath);
+    primaryFont = await pdfDoc.embedFont(fontBytes);
+  } else {
+    // Use a standard PDF font as fallback
+    primaryFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  }
+} catch (err) {
+  console.warn("Error loading font:", err.message);
+  primaryFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+}
 
-  for (const entry of geminiResult) {
-    const { page, translations, imageWidth, imageHeight } = entry;
-    if (page < 1 || page > pages.length) continue;
+    const pages = pdfDoc.getPages();
 
-    const pdfPage = pages[page - 1];
-    const { width: pw, height: ph } = pdfPage.getSize();
-
-    // reset per-page dedup set
-    const seen = new Set();
-
-    for (const { boundingBox, translatedText } of translations) {
-      if (!translatedText?.trim()) continue;
-
-      // compute PDF coords
-      const box = adjustCoordinates(boundingBox, pw, ph, imageWidth, imageHeight);
-      const sig = `${Math.round(box.x)}|${Math.round(box.y)}|${Math.round(box.width)}|${Math.round(box.height)}`;
-      if (seen.has(sig)) continue;
-      seen.add(sig);
-
-      // text fitting
-      const maxW = box.width - 10;
-      const maxH = box.height - 10;
-      let fontSize = Math.min(24, box.height / 2);
-      fontSize = Math.max(fontSize, 6);
-
-      // simple wrap/fit loop
-      let lines;
-      while (fontSize >= 6) {
-        const lh = fontSize * 1.2;
-        const words = translatedText.trim().split(/\s+/);
-        lines = [];
-        let line = words.shift();
-        for (const w of words) {
-          const test = `${line} ${w}`;
-          if (customFont.widthOfTextAtSize(test, fontSize) <= maxW) {
-            line = test;
-          } else {
-            lines.push(line);
-            line = w;
-          }
-        }
-        lines.push(line);
-        if (lines.length * lh <= maxH) break;
-        fontSize -= 1;
+    for (const entry of geminiResult) {
+      const { page, translations, imageWidth, imageHeight } = entry;
+      if (!page || page < 1 || page > pages.length || !translations || !Array.isArray(translations)) {
+        console.warn(`Invalid page data for page ${page}`);
+        continue;
       }
 
-      // center vertically
-      const lineH = fontSize * 1.2,
-            totalH = lines.length * lineH,
-            startY = box.y + (box.height - totalH) / 2 + totalH;
+      const pdfPage = pages[page - 1];
+      const { width: pw, height: ph } = pdfPage.getSize();
 
-      // draw each line with outline
-      for (let i = 0; i < lines.length; i++) {
-        const text = lines[i];
-        const tw = customFont.widthOfTextAtSize(text, fontSize);
-        const x = box.x + (box.width - tw) / 2;
-        const y = startY - i * lineH;
+      // reset per-page dedup set
+      const seen = new Set();
 
-        // white outline
-        [
-          [-1, -1], [0, -1], [1, -1],
-          [-1,  0],         [1,  0],
-          [-1,  1], [0,  1], [1,  1],
-        ].forEach(([dx, dy]) => {
-          pdfPage.drawText(text, {
-            x: x + dx, y: y + dy,
-            size: fontSize, font: customFont,
-            color: rgb(1, 1, 1),
-          });
-        });
+      for (const translation of translations) {
+        // Skip invalid translations
+        if (!translation || !translation.boundingBox || !translation.translatedText) {
+          continue;
+        }
+        const { boundingBox, translatedText } = translation;
+        
+        if (!translatedText?.trim()) continue;
 
-        // main text
-        pdfPage.drawText(text, {
-          x, y, size: fontSize, font: customFont, color: rgb(0, 0, 0),
-        });
+        // compute PDF coords
+        const box = adjustCoordinates(boundingBox, pw, ph, imageWidth, imageHeight);
+        const sig = `${Math.round(box.x)}|${Math.round(box.y)}|${Math.round(box.width)}|${Math.round(box.height)}`;
+        if (seen.has(sig)) continue;
+        seen.add(sig);
+
+        // Clean text - this helps with rendering special characters
+        const cleanedText = translatedText
+          .replace(/[\uFFFD\uFFFE\uFFFF]/g, '') // Remove Unicode replacement characters
+          .trim();
+
+        if (!cleanedText) continue;
+
+        // Text fitting with better sizing calculation
+        const paddingX = Math.max(4, box.width * 0.05);
+        const paddingY = Math.max(4, box.height * 0.05);
+        const maxW = box.width - (paddingX * 2);
+        const maxH = box.height - (paddingY * 2);
+        
+        // Start with a reasonable font size based on box dimensions
+        let fontSize = Math.min(16, Math.max(8, Math.floor(box.height / 3)));
+        
+        // Simple wrap/fit algorithm
+        let lines = [];
+        let optimalFontSize = fontSize;
+        
+        // Find optimal font size
+        while (fontSize >= 7) {
+          const words = cleanedText.split(/\s+/);
+          lines = [];
+          let line = words[0] || '';
+          
+          for (let i = 1; i < words.length; i++) {
+            const word = words[i];
+            const testLine = `${line} ${word}`;
+            const width = primaryFont.widthOfTextAtSize(testLine, fontSize);
+            
+            if (width <= maxW) {
+              line = testLine;
+            } else {
+              lines.push(line);
+              line = word;
+            }
+          }
+          
+          if (line) {
+            lines.push(line);
+          }
+          
+          const lineHeight = fontSize * 1.2;
+          const totalHeight = lines.length * lineHeight;
+          
+          if (totalHeight <= maxH) {
+            optimalFontSize = fontSize;
+            break;
+          }
+          
+          fontSize -= 1;
+        }
+        
+        // If we couldn't fit at minimum font size, try to squeeze more
+        if (fontSize < 7) {
+          // For very small text, simplify to fit
+          const compressedText = cleanedText.length > 30 
+            ? cleanedText.substring(0, 27) + '...' 
+            : cleanedText;
+            
+          lines = [compressedText];
+          optimalFontSize = 7;
+        }
+        
+        // Center text within bounding box
+        const lineHeight = optimalFontSize * 1.2;
+        const totalHeight = lines.length * lineHeight;
+        const startY = box.y + (box.height + totalHeight) / 2 - lineHeight;
+        
+        // Draw each line
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          const textWidth = primaryFont.widthOfTextAtSize(line, optimalFontSize);
+          const x = box.x + (box.width - textWidth) / 2;
+          const y = startY - (i * lineHeight);
+          
+          // Draw text with background for better readability
+          drawTextWithBackground(
+            pdfPage, 
+            line, 
+            x, 
+            y, 
+            optimalFontSize, 
+            primaryFont, 
+            {
+              bgColor: rgb(1, 1, 1),
+              textColor: rgb(0, 0, 0),
+              padding: 3,
+              opacity: 0.8
+            }
+          );
+        }
       }
     }
-  }
 
-  return pdfDoc;
+    return pdfDoc;
+  } catch (err) {
+    console.error("Error in overlay process:", err);
+    throw err;
+  }
 };
 
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    if (!req.file?.path) return res.status(400).json({ error: "No file" });
+    if (!req.file?.path) return res.status(400).json({ error: "No file uploaded" });
 
     // fetch PDF
     const { data } = await axios.get(req.file.path, { responseType: "arraybuffer" });
@@ -389,11 +727,17 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     // pdf2pic pages → buffers
     const converter = fromBuffer(pdfBuffer, {
-      density: 300, format: "png",
-      width: dims[0].width, height: dims[0].height,
-      savePath: "./temp", saveFilename: "page"
+      density: 300, 
+      format: "png",
+      width: dims[0].width, 
+      height: dims[0].height,
+      savePath: "./temp", 
+      saveFilename: "page"
     });
+    
+    console.log("Converting PDF pages to images...");
     const pagesData = await converter.bulk(-1);
+    console.log(`Converted ${pagesData.length} pages`);
 
     // read & cleanup
     const base64s = pagesData.map((p, i) => {
@@ -403,8 +747,12 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     });
 
     // enhance then call Gemini
+    console.log("Enhancing images for better text detection...") ;
     const enhanced = await enhanceImagesForTextDetection(base64s);
+    
+    console.log("Processing with Gemini...");
     let geminiResult = await processAllPages(enhanced);
+    console.log("Gemini processing complete");
 
     // tag each page + attach dims
     geminiResult = geminiResult.map((pg, i) => ({
@@ -415,12 +763,12 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     }));
 
     // Build new PDF & overlay
+    console.log("Creating new PDF document");
     const pdfDoc = await PDFDocument.create();
     pdfDoc.registerFontkit(fontkit);
-    const fontBytes = fs.readFileSync("./fonts/NotoSans-VariableFont_wdth,wght.ttf");
-    const customFont = await pdfDoc.embedFont(fontBytes);
 
     // add image pages
+    console.log("Adding pages to PDF");
     for (let i = 0; i < base64s.length; i++) {
       const img = Buffer.from(base64s[i], "base64");
       const png = await pdfDoc.embedPng(img);
@@ -429,19 +777,24 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     }
 
     // overlay translations
-    await improvedOverlayTranslations(pdfDoc, geminiResult, customFont);
+    console.log("Overlaying translations");
+    await improvedOverlayTranslations(pdfDoc, geminiResult);
 
     // save & upload
+    console.log("Saving PDF");
     const outBuf = await pdfDoc.save();
+    
+    console.log("Uploading to Cloudinary");
     const { secure_url } = await uploadPdfToCloudinary(Buffer.from(outBuf));
-    console.log("link of the file " , secure_url)
+    console.log("File uploaded, link:", secure_url);
+    
     return res.json({ url_link: secure_url });
 
   } catch (err) {
-    console.error(err);
+    console.error("Error in upload process:", err);
     return res.status(500).json({ error: err.message });
   }
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server on ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

@@ -269,8 +269,8 @@ catch(e){
  
  try{
  model =  new ChatGoogleGenerativeAI({
-  model: "gemini-1.5-flash", 
-  apiKey: "AIzaSyBhzSRE-R6LMJvRQRSGQ4n4oZvok0Gjeo8", // Your API key
+  model: "gemini-2.0-flash", 
+  apiKey:  "AIzaSyASr_05jizVrzxVFbHjvlvPErdNQ-duIW4" //"AIzaSyBhzSRE-R6LMJvRQRSGQ4n4oZvok0Gjeo8", // Your API key
 });
 } 
 catch(e){
