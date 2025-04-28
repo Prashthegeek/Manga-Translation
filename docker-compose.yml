@@ -1,23 +1,41 @@
 
 
-services:
-  backend:
-    build:
-      context: .
-      target: backend
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./backend:/app/backend
-    depends_on:
-      - frontend
+# services:
+#   backend:
+#     build:
+#       context: .
+#       target: backend
+#     ports:
+#       - "5000:5000"
+#     volumes:
+#       - ./backend:/app/backend
+#     depends_on:
+#       - frontend
 
-  frontend:
+#   frontend:
+#     build:
+#       context: .
+#       target: frontend
+#     ports:
+#       - "5173:4173"  # Vite serves on 4173 in production build
+#     volumes:
+#       - ./frontend:/app/frontend
+#     command: npx serve -s dist -l 4173
+
+
+
+version: '3'
+
+services:
+  app:
     build:
       context: .
-      target: frontend
+      dockerfile: Dockerfile
     ports:
-      - "5173:4173"  # Vite serves on 4173 in production build
+      - "5000:5000"  # Backend port
+      - "5173:3000"  # Frontend port if needed
     volumes:
-      - ./frontend:/app/frontend
-    command: npx serve -s dist -l 4173
+      - ./logs:/app/logs  # For logging if needed
+    environment:
+      - NODE_ENV=production
+      # Add other environment variables as needed
