@@ -1,0 +1,59 @@
+.upload-container {
+    max-width: 1000px;
+    margin: 50px auto;
+    text-align: center;
+    font-family: Arial, sans-serif;
+  }
+  
+  .drag-zone {
+    border: 2px dashed #ccc;
+    padding: 20px;
+    background-color: #f9f9f9;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+  
+  .drag-zone.dragging {
+    border-color: #007bff;
+    background-color: #e7f3ff;
+  }
+  
+  .drag-zone p {
+    margin: 0;
+    color: #333;
+  }
+  
+  .file-input {
+    display: block;
+    margin: 10px auto;
+  }
+  
+  button {
+    margin-top: 20px;
+    padding: 10px 20px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+  }
+  
+  button:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+  }
+  
+  button:hover:not(:disabled) {
+    background-color: #0056b3;
+  }
+  
+  .upload-container a {
+    color: #007bff;
+    text-decoration: none;
+  }
+  
+  .upload-container a:hover {
+    text-decoration: underline;
+  }
