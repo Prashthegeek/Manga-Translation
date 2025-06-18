@@ -83,7 +83,7 @@ export default function FileUpload() {
         setUploadProgress((prev) => (prev >= 90 ? prev : prev + 10));
       }, 300);
 
-      const response = await axios.post('${import.meta.env.VITE_BACKEND_URI}/upload', formData, {
+      const response = await axios.post(`${import.meta.env.VITE_BACKEND_URI}/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
 
       });
