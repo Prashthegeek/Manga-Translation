@@ -1697,6 +1697,7 @@ import upload from "./services/cloudinary/upload.js";
 import { fromBuffer } from "pdf2pic";
 import streamifier from "streamifier";
 import { fileURLToPath } from 'url';
+import sharp from 'sharp';
 
 // pdf-lib and fontkit
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
@@ -2114,13 +2115,29 @@ async function processAllPages(base64Images, pageDims) {
 }
 
 /** Enhance images for better text detection */
+const sharp = require("sharp");
+
+/** Enhance images for better text detection */
 const enhanceImagesForTextDetection = async (base64Images) =>
   Promise.all(
-    base64Images.map(async (b64) => {
-      const buf = Buffer.from(b64, "base64");
-      return buf.toString("base64");
+    base64Images.map(async (b64, index) => {
+      try {
+        const buf = Buffer.from(b64, "base64");
+
+        // Process the image with sharp: remove metadata, convert to clean PNG
+        const cleaned = await sharp(buf)
+          .removeMetadata()
+          .png()
+          .toBuffer();
+
+        return cleaned.toString("base64");
+      } catch (err) {
+        console.warn(`Error enhancing image ${index + 1}:`, err.message);
+        return b64; // fallback to original if sharp fails
+      }
     })
   );
+
 
 /** Coordinate adjustment function for PDF */
 const adjustCoordinatesForPDF = (bb, pageW, pageH, imgW, imgH) => {
