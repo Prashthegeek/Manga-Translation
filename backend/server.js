@@ -2115,9 +2115,6 @@ async function processAllPages(base64Images, pageDims) {
 }
 
 /** Enhance images for better text detection */
-const sharp = require("sharp");
-
-/** Enhance images for better text detection */
 const enhanceImagesForTextDetection = async (base64Images) =>
   Promise.all(
     base64Images.map(async (b64, index) => {
