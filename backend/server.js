@@ -1812,6 +1812,7 @@ const postProcessTranslation = (text, type) => {
 };
 
 /** Process a single image with Google Vision and translate the text */
+
 async function processImageWithVisionAndTranslate(base64Image, pageNumber, pageWidth, pageHeight) {
   try {
     const [textDetectionResult] = await visionClient.textDetection({
@@ -1837,7 +1838,7 @@ async function processImageWithVisionAndTranslate(base64Image, pageNumber, pageW
           const xs = vertices.map(v => v.x || 0);
           const ys = vertices.map(v => v.y || 0);
 
-          boundingBox = {
+          boundingBox = {   //har block ka bounding box stored in this obj
             x: Math.min(...xs),
             y: Math.min(...ys),
             width: Math.max(...xs) - Math.min(...xs),
@@ -1858,7 +1859,7 @@ async function processImageWithVisionAndTranslate(base64Image, pageNumber, pageW
         if (blockText.trim() && boundingBox) {
           textBlocks.push({
             text: blockText.trim(),
-            boundingBox
+            boundingBox  //we created above
           });
         }
       }
@@ -1895,7 +1896,7 @@ async function processImageWithVisionAndTranslate(base64Image, pageNumber, pageW
 
     const classifiedBlocks = textBlocks.map(block => {
       const type = classifyTextBlock(block.boundingBox, pageWidth, pageHeight, block.text);
-      return { ...block, type };
+      return { ...block, type };  //just adds the type of the text -> title , dialogue etc..... with previously containing stuffs inside of textBlocks like text and bounding box
     }).filter(block => {
       if (block.text.match(/^\d+$/) && block.boundingBox.width < 50 && block.boundingBox.height < 50) {
         console.log(`Filtered out block: Text="${block.text}" (likely artwork)`);
@@ -1908,7 +1909,7 @@ async function processImageWithVisionAndTranslate(base64Image, pageNumber, pageW
       console.log(`Block ${index + 1}: Classified as "${block.type}", Text="${block.text}"`);
     });
 
-    let blocksToTranslate = classifiedBlocks;
+    let blocksToTranslate = classifiedBlocks;  //classified blocks -> arr of objects ,each obj -> { text , bounding box , type}
 
     if (blocksToTranslate.length === 0) {
       console.log(`No blocks to translate on page ${pageNumber}`);
@@ -1925,20 +1926,35 @@ async function processImageWithVisionAndTranslate(base64Image, pageNumber, pageW
 
     // Simplified clustering logic with a single pass
     const getDistance = (b1, b2) => {
-      const xGap = Math.max(
-        Math.abs(b1.boundingBox.x - (b2.boundingBox.x + b2.boundingBox.width)),
-        Math.abs(b2.boundingBox.x - (b1.boundingBox.x + b1.boundingBox.width)),
-        0
-      );
-      const yGap = Math.max(
-        Math.abs(b1.boundingBox.y - (b2.boundingBox.y + b2.boundingBox.height)),
-        Math.abs(b2.boundingBox.y - (b1.boundingBox.y + b1.boundingBox.height)),
-        0
-      );
-      const overlapX = b1.boundingBox.x < (b2.boundingBox.x + b2.boundingBox.width) && b2.boundingBox.x < (b1.boundingBox.x + b1.boundingBox.width);
-      const overlapY = b1.boundingBox.y < (b2.boundingBox.y + b2.boundingBox.height) && b2.boundingBox.y < (b1.boundingBox.y + b1.boundingBox.height);
+      const box1 = b1.boundingBox;
+      const box2 = b2.boundingBox;
+    
+      const x1 = box1.x;
+      const x2 = box2.x;
+      const w1 = box1.width;
+      const w2 = box2.width;
+    
+      const y1 = box1.y;
+      const y2 = box2.y;
+      const h1 = box1.height;
+      const h2 = box2.height;
+    
+      const xGap =
+        x1 + w1 < x2 ? x2 - (x1 + w1) :
+        x2 + w2 < x1 ? x1 - (x2 + w2) :
+        0;
+    
+      const yGap =
+        y1 + h1 < y2 ? y2 - (y1 + h1) :
+        y2 + h2 < y1 ? y1 - (y2 + h2) :
+        0;
+    
+      const overlapX = x1 < x2 + w2 && x2 < x1 + w1;
+      const overlapY = y1 < y2 + h2 && y2 < y1 + h1;
+    
       return { xGap, yGap, overlapX, overlapY };
     };
+    
 
     const avgWidth = blocksToTranslate.reduce((sum, b) => sum + b.boundingBox.width, 0) / blocksToTranslate.length;
     const avgHeight = blocksToTranslate.reduce((sum, b) => sum + b.boundingBox.height, 0) / blocksToTranslate.length;
@@ -2087,11 +2103,11 @@ async function processAllPages(base64Images, pageDims) {
   const batchSize = 2;
 
   for (let i = 0; i < base64Images.length; i += batchSize) {
-    console.log(`Processing batch starting at page ${i + 1}`);
+    console.log(`Processing batch starting at page ${i+1}`);
     const batch = base64Images.slice(i, i + batchSize);
     const batchPromises = batch.map((base64, idx) =>
       processImageWithVisionAndTranslate(base64, i + idx + 1, pageDims[i + idx].width, pageDims[i + idx].height)
-    );
+    );   //format of response from processImageWith..functionn-> object{ page: pageNumber, translations: [] }
 
     try {
       const batchResults = await Promise.all(batchPromises);
@@ -2123,8 +2139,7 @@ const enhanceImagesForTextDetection = async (base64Images) =>
 
         // Process the image with sharp: remove metadata, convert to clean PNG
         const cleaned = await sharp(buf)
-          .removeMetadata()
-          .png()
+          .png()  //so,normalizing every image by converting everyone to png (a normalised format)
           .toBuffer();
 
         return cleaned.toString("base64");
@@ -2646,16 +2661,16 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     if (!req.file?.path) return res.status(400).json({ error: "No file uploaded" });
 
     const { data } = await axios.get(req.file.path, { responseType: "arraybuffer" });
-    const pdfBuffer = Buffer.from(data);
+    const pdfBuffer = Buffer.from(data);    //arraybuffer to node js buffer
 
-    const tempDoc = await PDFDocument.load(pdfBuffer, {ignoreEncryption:true});
-    const dims = tempDoc.getPages().map(p => {
+    const tempDoc = await PDFDocument.load(pdfBuffer, {ignoreEncryption:true});  //stores pdf 
+    const dims = tempDoc.getPages().map(p => {   //This code is resizing all the pages of the PDF proportionally (keeping aspect ratio intact) such that the larger side becomes 1024 pixels, and the smaller side is scaled accordingly , normalization of images (universally accepted formula) , we are not changing width and height now(just overwriting their values)
       const { width, height } = p.getSize();
       const max = 1024;
-      return width > height
+      return width > height      
         ? { width: max, height: Math.round((height / width) * max) }
         : { height: max, width: Math.round((width / height) * max) };
-    });
+    });  //dims is an array of objects where each arr[i] is an obj which contains normalised height and width of the page i .
 
     const tempDir = path.join(__dirname, 'temp');
     if (!fs.existsSync(tempDir)) {
@@ -2686,7 +2701,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       try {
         const converter = fromBuffer(pdfBuffer, {
           ...converterOptions,
-          density: density
+          density: density  //overriding density with new one (baaki sab same rahega)
         });
         pagesData = await converter.bulk(-1);
         console.log(`Fallback conversion successful: Converted ${pagesData.length} pages`);
@@ -2721,10 +2736,10 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     const enhanced = await enhanceImagesForTextDetection(base64s);
 
     console.log("Processing with Google Vision and Translation APIs...");
-    let visionResults = await processAllPages(enhanced, dims);
+    let visionResults = await processAllPages(enhanced, dims);  //Also translates detected text and returns an array of objects(each obj contains info about each page)
     console.log("Vision and Translation processing complete");
 
-    visionResults = visionResults.map((pg, i) => ({
+    visionResults = visionResults.map((pg, i) => ({  //adding meta data to each of the objects
       page: i + 1,
       ...pg,
       imageWidth: dims[i].width,
